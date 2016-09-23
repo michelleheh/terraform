@@ -95,6 +95,8 @@ func (c *ApplyCommand) Run(args []string) int {
 		}
 	}
 
+	terraform.SetDebugInfo(DefaultDataDir)
+
 	// Build the context based on the arguments given
 	ctx, planned, err := c.Context(contextOpts{
 		Destroy:     c.Destroy,

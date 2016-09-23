@@ -1,7 +1,9 @@
 package terraform
 
 import (
+	"fmt"
 	"log"
+	"strings"
 
 	"github.com/hashicorp/terraform/config/module"
 )
@@ -30,9 +32,20 @@ func (b *BasicGraphBuilder) Build(path []string) (*Graph, error) {
 			return g, err
 		}
 
+		stepName := fmt.Sprintf("%T", step)
+		dot := strings.LastIndex(stepName, ".")
+		if dot >= 0 {
+			stepName = stepName[dot+1:]
+		}
+
 		log.Printf(
-			"[TRACE] Graph after step %T:\n\n%s",
-			step, g.StringWithNodeTypes())
+			"[TRACE] Graph after step %s:\n\n%s",
+			stepName, g.StringWithNodeTypes())
+
+		err := DebugInfo.WriteGraph("build-"+stepName, g)
+		if err != nil {
+			log.Printf("[ERROR] %v", err)
+		}
 	}
 
 	// Validate the graph structure

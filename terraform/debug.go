@@ -3,6 +3,7 @@ package terraform
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -62,6 +63,8 @@ type debugInfo struct {
 	archive *zip.Writer
 	step    int
 	closed  bool
+
+	hookLogs bytes.Buffer
 }
 
 func (d *debugInfo) Close() error {
@@ -83,6 +86,7 @@ func (d *debugInfo) Close() error {
 	return d.file.Close()
 }
 
+// Write the current graph state to the debug log in dot format.
 func (d *debugInfo) WriteGraph(step string, g *Graph) error {
 	if d == nil {
 		return nil
@@ -116,8 +120,8 @@ func (d *debugInfo) WriteGraph(step string, g *Graph) error {
 	return err
 }
 
-// writeFile writes data as a single file to the debug arhive.
-func (d *debugInfo) writeFile(name string, data []byte) error {
+// WriteFile writes data as a single file to the debug arhive.
+func (d *debugInfo) WriteFile(name string, data []byte) error {
 	if d == nil {
 		return nil
 	}
@@ -140,7 +144,7 @@ func (d *debugInfo) writeFile(name string, data []byte) error {
 
 // Return a a buffer we can write to, which will be added as a whole to the
 // debug archive when it's closed.
-func (d *debugInfo) StepLog(name string) *stepWriter {
+func (d *debugInfo) StepLog(name string) *DebugWriter {
 	if d == nil {
 		return nil
 	}
@@ -150,42 +154,256 @@ func (d *debugInfo) StepLog(name string) *stepWriter {
 	name = fmt.Sprintf("%d-%s.log", d.step, name)
 	d.step++
 
-	return &stepWriter{
+	return &DebugWriter{
 		name:      name,
 		debugInfo: d,
 	}
 }
 
-type stepWriter struct {
+type DebugWriter struct {
 	name      string
 	buf       bytes.Buffer
 	debugInfo *debugInfo
 }
 
-func (s *stepWriter) Write(b []byte) (int, error) {
+func (s *DebugWriter) Write(b []byte) (int, error) {
 	if s == nil {
 		return 0, nil
 	}
 	return s.buf.Write(b)
 }
 
-func (s *stepWriter) WriteString(str string) (int, error) {
+func (s *DebugWriter) WriteString(str string) (int, error) {
 	if s == nil {
 		return 0, nil
 	}
 	return io.WriteString(&s.buf, str)
 }
 
-func (s *stepWriter) Close() error {
+func (s *DebugWriter) Close() error {
 	if s == nil {
 		return nil
 	}
-	return s.debugInfo.writeFile(s.name, s.buf.Bytes())
+	return s.debugInfo.WriteFile(s.name, s.buf.Bytes())
 }
 
-func (s *stepWriter) Printf(f string, args ...interface{}) (int, error) {
+func (s *DebugWriter) Printf(f string, args ...interface{}) (int, error) {
 	if s == nil {
 		return 0, nil
 	}
 	return fmt.Fprintf(&s.buf, f, args...)
+}
+
+type DebugHook struct{}
+
+func (*DebugHook) PreApply(ii *InstanceInfo, is *InstanceState, id *InstanceDiff) (HookAction, error) {
+	var buf bytes.Buffer
+
+	if ii != nil {
+		buf.WriteString(ii.HumanId())
+		buf.WriteString("\n")
+	}
+
+	if is != nil {
+		buf.WriteString(is.String())
+		buf.WriteString("\n")
+	}
+
+	js, err := json.MarshalIndent(id, "", "  ")
+	if err != nil {
+		return HookActionContinue, err
+	}
+	buf.Write(js)
+
+	DebugInfo.WriteFile("hook-PreApply", buf.Bytes())
+
+	return HookActionContinue, nil
+}
+
+func (*DebugHook) PostApply(ii *InstanceInfo, is *InstanceState, err error) (HookAction, error) {
+	var buf bytes.Buffer
+
+	if ii != nil {
+		buf.WriteString(ii.HumanId())
+		buf.WriteString("\n")
+	}
+
+	if is != nil {
+		buf.WriteString(is.String())
+		buf.WriteString("\n")
+	}
+
+	if err != nil {
+		buf.WriteString(err.Error())
+	}
+
+	DebugInfo.WriteFile("hook-PostApply", buf.Bytes())
+
+	return HookActionContinue, nil
+}
+
+func (*DebugHook) PreDiff(ii *InstanceInfo, is *InstanceState) (HookAction, error) {
+	var buf bytes.Buffer
+	if ii != nil {
+		buf.WriteString(ii.HumanId())
+		buf.WriteString("\n")
+	}
+
+	if is != nil {
+		buf.WriteString(is.String())
+		buf.WriteString("\n")
+	}
+	DebugInfo.WriteFile("hook-PreDiff", buf.Bytes())
+
+	return HookActionContinue, nil
+}
+
+func (*DebugHook) PostDiff(ii *InstanceInfo, id *InstanceDiff) (HookAction, error) {
+	var buf bytes.Buffer
+	if ii != nil {
+		buf.WriteString(ii.HumanId())
+		buf.WriteString("\n")
+	}
+
+	js, err := json.MarshalIndent(id, "", "  ")
+	if err != nil {
+		return HookActionContinue, err
+	}
+	buf.Write(js)
+
+	DebugInfo.WriteFile("hook-PostDiff", buf.Bytes())
+
+	return HookActionContinue, nil
+}
+
+func (*DebugHook) PreProvisionResource(ii *InstanceInfo, is *InstanceState) (HookAction, error) {
+	var buf bytes.Buffer
+	if ii != nil {
+		buf.WriteString(ii.HumanId())
+		buf.WriteString("\n")
+	}
+
+	if is != nil {
+		buf.WriteString(is.String())
+		buf.WriteString("\n")
+	}
+	DebugInfo.WriteFile("hook-PreProvisionResource", buf.Bytes())
+
+	return HookActionContinue, nil
+}
+
+func (*DebugHook) PostProvisionResource(ii *InstanceInfo, is *InstanceState) (HookAction, error) {
+	var buf bytes.Buffer
+	if ii != nil {
+		buf.WriteString(ii.HumanId())
+		buf.WriteString("\n")
+	}
+
+	if is != nil {
+		buf.WriteString(is.String())
+		buf.WriteString("\n")
+	}
+	DebugInfo.WriteFile("hook-PostProvisionResource", buf.Bytes())
+	return HookActionContinue, nil
+}
+
+func (*DebugHook) PreProvision(ii *InstanceInfo, s string) (HookAction, error) {
+	var buf bytes.Buffer
+	if ii != nil {
+		buf.WriteString(ii.HumanId())
+		buf.WriteString("\n")
+	}
+	buf.WriteString(s + "\n")
+
+	DebugInfo.WriteFile("hook-PreProvision", buf.Bytes())
+	return HookActionContinue, nil
+}
+
+func (*DebugHook) PostProvision(ii *InstanceInfo, s string) (HookAction, error) {
+	var buf bytes.Buffer
+	if ii != nil {
+		buf.WriteString(ii.HumanId())
+		buf.WriteString("\n")
+	}
+	buf.WriteString(s + "\n")
+
+	DebugInfo.WriteFile("hook-PostProvision", buf.Bytes())
+	return HookActionContinue, nil
+}
+
+func (*DebugHook) ProvisionOutput(ii *InstanceInfo, s1 string, s2 string) {
+	var buf bytes.Buffer
+	if ii != nil {
+		buf.WriteString(ii.HumanId())
+		buf.WriteString("\n")
+	}
+	buf.WriteString(s1 + "\n")
+	buf.WriteString(s2 + "\n")
+
+	DebugInfo.WriteFile("hook-ProvisionOutput", buf.Bytes())
+}
+
+func (*DebugHook) PreRefresh(ii *InstanceInfo, is *InstanceState) (HookAction, error) {
+	var buf bytes.Buffer
+	if ii != nil {
+		buf.WriteString(ii.HumanId())
+		buf.WriteString("\n")
+	}
+
+	if is != nil {
+		buf.WriteString(is.String())
+		buf.WriteString("\n")
+	}
+	DebugInfo.WriteFile("hook-PreRefresh", buf.Bytes())
+	return HookActionContinue, nil
+}
+
+func (*DebugHook) PostRefresh(ii *InstanceInfo, is *InstanceState) (HookAction, error) {
+	var buf bytes.Buffer
+	if ii != nil {
+		buf.WriteString(ii.HumanId())
+		buf.WriteString("\n")
+	}
+
+	if is != nil {
+		buf.WriteString(is.String())
+		buf.WriteString("\n")
+	}
+	DebugInfo.WriteFile("hook-PostRefresh", buf.Bytes())
+	return HookActionContinue, nil
+}
+
+func (*DebugHook) PreImportState(ii *InstanceInfo, s string) (HookAction, error) {
+	var buf bytes.Buffer
+	if ii != nil {
+		buf.WriteString(ii.HumanId())
+		buf.WriteString("\n")
+	}
+	buf.WriteString(s + "\n")
+
+	DebugInfo.WriteFile("hook-PreImportState", buf.Bytes())
+	return HookActionContinue, nil
+}
+
+func (*DebugHook) PostImportState(ii *InstanceInfo, iss []*InstanceState) (HookAction, error) {
+	var buf bytes.Buffer
+
+	if ii != nil {
+		buf.WriteString(ii.HumanId())
+		buf.WriteString("\n")
+	}
+
+	for _, is := range iss {
+		if is != nil {
+			buf.WriteString(is.String())
+			buf.WriteString("\n")
+		}
+	}
+	DebugInfo.WriteFile("hook-PostImportState", buf.Bytes())
+	return HookActionContinue, nil
+}
+
+// skip logging this, since it could be huge
+func (*DebugHook) PostStateUpdate(*State) (HookAction, error) {
+	return HookActionContinue, nil
 }
